@@ -1,0 +1,21 @@
+ticker,sector,industry,market_cap,beta,pe_ratio
+AAPL,Technology,Consumer Electronics,4039405731840,1.107,36.486595
+MSFT,Technology,Software - Infrastructure,3597503823872,1.07,34.37358
+GOOGL,Communication Services,Internet Content & Information,3663432253440,1.07,29.857847
+AMZN,Consumer Cyclical,Internet Retail,2424113201152,1.372,32.073547
+TSLA,Consumer Cyclical,Auto Manufacturers,1607601225728,1.878,333.3586
+JPM,Financial Services,Banks - Diversified,860672950272,1.075,15.502724
+BAC,Financial Services,Banks - Diversified,401900961792,1.304,14.825136
+GS,Financial Services,Capital Markets,265274490880,1.348,17.792892
+MS,Financial Services,Capital Markets,276102250496,1.215,17.739489
+C,Financial Services,Banks - Diversified,207708520448,1.196,15.84691
+XOM,Energy,Oil & Gas Integrated,496838836224,0.379,16.938953
+CVX,Energy,Oil & Gas Integrated,297569124352,0.673,20.801409
+COP,Energy,Oil & Gas E&P,115189956608,0.328,13.026836
+SLB,Energy,Oil & Gas Equipment & Services,56963309568,0.732,14.836576
+EOG,Energy,Oil & Gas E&P,56024383488,0.504,10.189672
+JNJ,Healthcare,Drug Manufacturers - General,501880258560,0.349,20.12657
+PFE,Healthcare,Drug Manufacturers - General,142370127872,0.42,14.55814
+UNH,Healthcare,Healthcare Plans,297241903104,0.432,17.090626
+ABBV,Healthcare,Drug Manufacturers - General,393808642048,0.349,170.09161
+TMO,Healthcare,Diagnostics & Research,211294470144,0.902,32.470554
