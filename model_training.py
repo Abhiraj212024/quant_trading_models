@@ -277,7 +277,7 @@ class EnsembleModel:
         import pickle
         for k in ["cnn_lstm", "transformer"]:
             if k in self.models:
-                self.models[k].save(f"{path}_{k}")
+                self.models[k].save(f"{path}_{k}.keras")
 
         if "lightgbm" in self.models:
             self.models["lightgbm"].save_model(f"{path}_lightgbm.txt")
