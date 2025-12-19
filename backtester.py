@@ -361,6 +361,10 @@ class Backtester:
         print("\n" + "="*60)
         print("BACKTEST RESULTS")
         print("="*60)
+
+        if not self.results:
+            print(f"Error: no trades executed.")
+            return
         
         print(f"\nPerformance:")
         print(f"  Total Return: {self.results['total_return_pct']:.2f}%")

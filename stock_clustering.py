@@ -178,7 +178,6 @@ class StockClusterer:
         
         # Perform clustering
         clusterer = AgglomerativeClustering(n_clusters=n_clusters, 
-                                           affinity='precomputed',
                                            linkage='average')
         labels = clusterer.fit_predict(combined_distance)
         

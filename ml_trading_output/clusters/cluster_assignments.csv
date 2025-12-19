@@ -1,0 +1,30 @@
+ticker,cluster,sector,industry
+AAPL,0,Technology,Consumer Electronics
+MSFT,0,Technology,Software - Infrastructure
+GOOGL,0,Communication Services,Internet Content & Information
+AMZN,0,Consumer Cyclical,Internet Retail
+NVDA,2,Technology,Semiconductors
+META,1,Communication Services,Internet Content & Information
+TSLA,2,Consumer Cyclical,Auto Manufacturers
+JPM,0,Financial Services,Banks - Diversified
+BAC,0,Financial Services,Banks - Diversified
+GS,0,Financial Services,Capital Markets
+MS,0,Financial Services,Capital Markets
+C,0,Financial Services,Banks - Diversified
+WFC,0,Financial Services,Banks - Diversified
+XOM,0,Energy,Oil & Gas Integrated
+CVX,0,Energy,Oil & Gas Integrated
+COP,0,Energy,Oil & Gas E&P
+SLB,0,Energy,Oil & Gas Equipment & Services
+JNJ,0,Healthcare,Drug Manufacturers - General
+PFE,0,Healthcare,Drug Manufacturers - General
+UNH,3,Healthcare,Healthcare Plans
+ABBV,0,Healthcare,Drug Manufacturers - General
+TMO,0,Healthcare,Diagnostics & Research
+WMT,0,Consumer Defensive,Discount Stores
+HD,0,Consumer Cyclical,Home Improvement Retail
+MCD,0,Consumer Cyclical,Restaurants
+NKE,1,Consumer Cyclical,Footwear & Accessories
+BA,0,Industrials,Aerospace & Defense
+CAT,0,Industrials,Farm & Heavy Construction Machinery
+GE,0,Industrials,Aerospace & Defense
