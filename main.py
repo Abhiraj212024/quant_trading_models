@@ -23,7 +23,7 @@ class TradingPipeline:
     """End-to-end ML trading pipeline"""
     
     def __init__(self, tickers: list, start_date: str, end_date: str,
-                 output_dir: str = 'output/'):
+                 output_dir: str = '/kaggle/working/output/'):
         self.tickers = tickers
         self.start_date = start_date
         self.end_date = end_date
