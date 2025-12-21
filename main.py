@@ -1,11 +1,5 @@
 """
-main.py - IMPROVED ML trading system with NO look-ahead bias
-Key improvements:
-- Expanded stock universe (150+ stocks)
-- Removed look-ahead bias in feature scaling
-- Enhanced equity visualization
-- Better error handling
-- Progress tracking
+main.py - FIXED signal generation to handle sequence length properly
 """
 import os
 import numpy as np
@@ -52,13 +46,8 @@ class TradingPipeline:
             end_date=self.end_date
         )
         
-        # Fetch raw data
         self.collector.fetch_data()
-        
-        # Process features
         processed_data = self.collector.process_all_features()
-        
-        # Save data
         self.collector.save_data(processed_data, f"{self.output_dir}/data/")
         
         print(f"\n✓ Collected data for {len(processed_data)} stocks")
@@ -70,21 +59,16 @@ class TradingPipeline:
         print("STEP 2: STOCK CLUSTERING")
         print("="*70)
         
-        # Load fundamentals and clustering features
         fundamentals = pd.read_csv(f"{self.output_dir}/data/fundamentals.csv")
         clustering_features = pd.read_csv(f"{self.output_dir}/data/clustering_features.csv")
         
-        # Create clusterer
         self.clusterer = StockClusterer(
             processed_data=processed_data,
             fundamentals=fundamentals,
             clustering_features=clustering_features
         )
         
-        # Perform hybrid clustering
         cluster_results = self.clusterer.hybrid_clustering(n_clusters=n_clusters)
-        
-        # Visualize and save
         self.clusterer.visualize_clusters(cluster_results, 
                                          save_path=f"{self.output_dir}/clusters/")
         self.clusterer.save_clusters(f"{self.output_dir}/clusters/")
@@ -106,7 +90,6 @@ class TradingPipeline:
             for cluster_id in np.unique(cluster_results['labels']):
                 print(f"\nCluster {cluster_id}:")
                 
-                # Get cluster data
                 cluster_data = self.clusterer.get_cluster_data(cluster_id)
                 
                 if len(cluster_data) < 3:
@@ -114,23 +97,18 @@ class TradingPipeline:
                     failed_count += 1
                     continue
                 
-                # Create ensemble model
                 model = EnsembleModel(cluster_id=cluster_id, horizon=horizon)
                 
                 try:
-                    # Prepare data with proper time-based split
                     X_train, X_val, y_train, y_val = model.prepare_data(cluster_data)
                     
-                    # Train models
                     model.train_lightgbm(X_train, X_val, y_train, y_val)
                     model.train_cnn_lstm(X_train, X_val, y_train, y_val)
                     model.train_transformer(X_train, X_val, y_train, y_val)
                     
-                    # Save model
                     model_path = f"{self.output_dir}/models/cluster_{cluster_id}_horizon_{horizon}d"
                     model.save(model_path)
                     
-                    # Store in dictionary
                     self.models[(cluster_id, horizon)] = model
                     trained_count += 1
                     
@@ -146,7 +124,10 @@ class TradingPipeline:
     
     def step4_generate_signals(self, cluster_results: dict, 
                                processed_data: dict, horizon: int = 5) -> dict:
-        """Step 4: Generate trading signals with probabilities"""
+        """
+        Step 4: Generate trading signals with probabilities
+        FIXED: Properly handle sequence length in predictions
+        """
         print("\n" + "="*70)
         print("STEP 4: GENERATING TRADING SIGNALS")
         print("="*70)
@@ -156,14 +137,12 @@ class TradingPipeline:
         fail_count = 0
         
         for cluster_id in np.unique(cluster_results['labels']):
-            # Get cluster stocks
             cluster_tickers = [
                 ticker for ticker, label in zip(cluster_results['tickers'], 
                                                cluster_results['labels'])
                 if label == cluster_id
             ]
             
-            # Load model
             if (cluster_id, horizon) not in self.models:
                 print(f"Cluster {cluster_id}: No model found")
                 continue
@@ -179,18 +158,35 @@ class TradingPipeline:
                 try:
                     df = processed_data[ticker]
                     
-                    # Remove rows with NaN in features
+                    # Get features (without target columns)
                     feature_df = df[model.feature_names].dropna()
                     
-                    if len(feature_df) < 100:
+                    if len(feature_df) < model.sequence_length + 50:
                         fail_count += 1
                         continue
                     
-                    # Get recent data for prediction (last 100 days)
-                    recent_data = feature_df.tail(100).values
+                    # Use recent data for prediction
+                    # Take more data than needed to account for sequence consumption
+                    lookback_window = 200  # Increased from 100
+                    recent_data = feature_df.tail(lookback_window).values
                     
                     # ML prediction
                     ml_predictions = model.predict(recent_data)
+                    
+                    # CRITICAL FIX: Account for sequence length
+                    # The model consumes sequence_length points to make predictions
+                    # So predictions start at index sequence_length
+                    actual_prediction_length = len(ml_predictions)
+                    
+                    # Get the corresponding dates for predictions
+                    # Skip the first sequence_length points since they're used for context
+                    valid_dates = feature_df.tail(lookback_window).index[model.sequence_length:]
+                    
+                    # Trim to match prediction length
+                    if len(valid_dates) > actual_prediction_length:
+                        valid_dates = valid_dates[-actual_prediction_length:]
+                    elif len(valid_dates) < actual_prediction_length:
+                        ml_predictions = ml_predictions[:len(valid_dates)]
                     
                     # Stochastic probability estimation
                     returns = df['returns'].dropna().tail(252)
@@ -200,37 +196,42 @@ class TradingPipeline:
                     
                     stoch_model = EnsembleProbability(returns)
                     
-                    # Generate signals for each day
+                    # Generate signals
                     signals_list = []
-                    valid_indices = feature_df.tail(len(ml_predictions)).index
                     
-                    for i, date_idx in enumerate(valid_indices):
+                    for i, date_idx in enumerate(valid_dates):
                         if i >= len(ml_predictions):
                             break
                         
-                        current_price = df.loc[date_idx, 'close']
-                        ml_pred = ml_predictions[i]
-                        
-                        signal_info = stoch_model.generate_trading_signal(
-                            current_price=current_price,
-                            horizon=horizon,
-                            ml_prediction=ml_pred,
-                            threshold=0.6
-                        )
-                        
-                        signals_list.append({
-                            'date': date_idx,
-                            'signal': 1 if signal_info['action'] == 'BUY' else -1 if signal_info['action'] == 'SELL' else 0,
-                            'confidence': signal_info['confidence'],
-                            'probability_up': signal_info['probability_up'],
-                            'expected_return': signal_info['expected_return'],
-                            'var_95': signal_info['risk_var_95'],
-                            'kelly_size': signal_info['position_size_kelly']
-                        })
+                        try:
+                            current_price = df.loc[date_idx, 'close']
+                            ml_pred = ml_predictions[i]
+                            
+                            signal_info = stoch_model.generate_trading_signal(
+                                current_price=current_price,
+                                horizon=horizon,
+                                ml_prediction=ml_pred,
+                                threshold=0.6
+                            )
+                            
+                            signals_list.append({
+                                'date': date_idx,
+                                'signal': 1 if signal_info['action'] == 'BUY' else -1 if signal_info['action'] == 'SELL' else 0,
+                                'confidence': signal_info['confidence'],
+                                'probability_up': signal_info['probability_up'],
+                                'expected_return': signal_info['expected_return'],
+                                'var_95': signal_info['risk_var_95'],
+                                'kelly_size': signal_info['position_size_kelly']
+                            })
+                        except KeyError:
+                            # Date not found in original dataframe
+                            continue
                     
-                    if signals_list:
+                    if len(signals_list) > 0:
                         all_signals[ticker] = pd.DataFrame(signals_list).set_index('date')
                         success_count += 1
+                        if success_count % 10 == 0:
+                            print(f"  Generated signals for {success_count} stocks...")
                 
                 except Exception as e:
                     print(f"  {ticker}: Error - {str(e)}")
@@ -253,7 +254,10 @@ class TradingPipeline:
         print("STEP 5: BACKTESTING STRATEGY")
         print("="*70)
         
-        # Configure backtester
+        if len(signals) == 0:
+            print("✗ No signals generated, cannot run backtest")
+            return {'error': 'No signals'}
+        
         config = BacktestConfig(
             initial_capital=100000,
             commission=0.001,
@@ -265,13 +269,12 @@ class TradingPipeline:
         
         backtester = Backtester(config)
         
-        # Prepare data
         price_data = {
             ticker: df[['open', 'high', 'low', 'close', 'volume']]
             for ticker, df in processed_data.items()
+            if ticker in signals  # Only include stocks with signals
         }
         
-        # Run backtest
         results = backtester.run(
             data=price_data,
             signals=signals,
@@ -279,13 +282,8 @@ class TradingPipeline:
             end_date=None
         )
         
-        # Display results
         backtester.print_results()
-        
-        # Plot results (ENHANCED with equity curve)
         backtester.plot_results(save_path=f"{self.output_dir}/results/")
-        
-        # Export trades
         backtester.export_trades(f"{self.output_dir}/results/trades.csv")
         
         return results
@@ -313,7 +311,7 @@ class TradingPipeline:
             # Step 3: Train Models
             self.step3_train_models(cluster_results, horizons)
             
-            # Step 4: Generate Signals
+            # Step 4: Generate Signals (FIXED)
             signals = self.step4_generate_signals(cluster_results, processed_data, 
                                                   horizon=horizons[0])
             
