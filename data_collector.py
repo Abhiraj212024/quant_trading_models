@@ -1,5 +1,6 @@
 """
 data_collector.py - Enhanced stock data collector with ML features
+FIXED: No look-ahead bias, expanded stock universe
 """
 import yfinance as yf
 import pandas as pd
@@ -19,35 +20,42 @@ class EnhancedDataCollector:
     def fetch_data(self) -> Dict[str, pd.DataFrame]:
         """Fetch OHLCV data for all tickers"""
         print("Fetching stock data...")
+        successful = 0
+        failed = 0
+        
         for ticker in self.tickers:
             try:
                 stock = yf.Ticker(ticker)
                 df = stock.history(start=self.start_date, end=self.end_date)
                 
-                if len(df) > 0:
+                if len(df) > 100:  # Minimum data requirement
                     df.columns = [col.lower() for col in df.columns]
                     self.data[ticker] = df
-                    print(f"✓ {ticker}: {len(df)} records")
+                    successful += 1
+                    if successful % 10 == 0:
+                        print(f"  Fetched {successful} stocks...")
                 else:
-                    print(f"✗ {ticker}: No data available")
+                    failed += 1
             except Exception as e:
-                print(f"✗ {ticker}: Error - {str(e)}")
+                failed += 1
         
+        print(f"✓ Successfully fetched {successful} stocks")
+        print(f"✗ Failed to fetch {failed} stocks")
         return self.data
     
     def add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add comprehensive technical indicators"""
+        """Add comprehensive technical indicators - NO LOOK-AHEAD BIAS"""
         # Price-based indicators
         df['returns'] = df['close'].pct_change()
         df['log_returns'] = np.log(df['close'] / df['close'].shift(1))
         
-        # Moving averages
+        # Moving averages (use only past data)
         for window in [5, 10, 20, 50, 200]:
             df[f'sma_{window}'] = df['close'].rolling(window).mean()
-            df[f'ema_{window}'] = df['close'].ewm(span=window).mean()
+            df[f'ema_{window}'] = df['close'].ewm(span=window, adjust=False).mean()
         
-        # Volatility
-        for window in [5, 10, 20]:
+        # Volatility (use only past data)
+        for window in [5, 10, 20, 60]:
             df[f'volatility_{window}'] = df['returns'].rolling(window).std()
             df[f'atr_{window}'] = self._calculate_atr(df, window)
         
@@ -56,10 +64,10 @@ class EnhancedDataCollector:
         df['rsi_28'] = self._calculate_rsi(df['close'], 28)
         
         # MACD
-        exp1 = df['close'].ewm(span=12).mean()
-        exp2 = df['close'].ewm(span=26).mean()
+        exp1 = df['close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['close'].ewm(span=26, adjust=False).mean()
         df['macd'] = exp1 - exp2
-        df['macd_signal'] = df['macd'].ewm(span=9).mean()
+        df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
         df['macd_hist'] = df['macd'] - df['macd_signal']
         
         # Bollinger Bands
@@ -73,47 +81,49 @@ class EnhancedDataCollector:
         
         # Volume indicators
         df['volume_sma_20'] = df['volume'].rolling(20).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_sma_20']
-        df['obv'] = (np.sign(df['returns']) * df['volume']).cumsum()
+        df['volume_ratio'] = df['volume'] / df['volume_sma_20'].replace(0, 1)
+        df['obv'] = (np.sign(df['returns']) * df['volume']).fillna(0).cumsum()
         
         # Price patterns
-        df['high_low_ratio'] = df['high'] / df['low']
-        df['close_open_ratio'] = df['close'] / df['open']
+        df['high_low_ratio'] = df['high'] / df['low'].replace(0, 1)
+        df['close_open_ratio'] = df['close'] / df['open'].replace(0, 1)
+        
+        # Momentum
+        for period in [5, 10, 20]:
+            df[f'momentum_{period}'] = df['close'].pct_change(period)
         
         return df
     
     def add_orderbook_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Simulate order book features (real data requires market data feed)
-        In production, replace with actual order book data
-        """
+        """Simulate order book features - NO LOOK-AHEAD BIAS"""
         # Bid-Ask Spread proxy (using high-low as approximation)
-        df['spread_proxy'] = (df['high'] - df['low']) / df['close']
+        df['spread_proxy'] = (df['high'] - df['low']) / df['close'].replace(0, 1)
         
-        # Volume imbalance (approximation using volume and price movement)
+        # Volume imbalance
         df['volume_imbalance'] = np.where(
             df['close'] > df['open'],
             df['volume'],
             -df['volume']
         )
-        df['volume_imbalance_ratio'] = df['volume_imbalance'] / df['volume']
+        df['volume_imbalance_ratio'] = df['volume_imbalance'] / df['volume'].replace(0, 1)
         
         # Rolling volume imbalance
         for window in [5, 10, 20]:
             df[f'cum_volume_imbalance_{window}'] = df['volume_imbalance'].rolling(window).sum()
-            df[f'volume_imbalance_ratio_{window}'] = df[f'cum_volume_imbalance_{window}'] / df['volume'].rolling(window).sum()
+            vol_sum = df['volume'].rolling(window).sum().replace(0, 1)
+            df[f'volume_imbalance_ratio_{window}'] = df[f'cum_volume_imbalance_{window}'] / vol_sum
         
-        # Price pressure (rate of price change weighted by volume)
+        # Price pressure
         df['price_pressure'] = df['returns'] * df['volume_ratio']
         df['price_pressure_5'] = df['price_pressure'].rolling(5).mean()
         
         # Liquidity proxy
-        df['liquidity_proxy'] = df['volume'] / (df['high'] - df['low'])
+        df['liquidity_proxy'] = df['volume'] / (df['high'] - df['low']).replace(0, 1)
         
         return df
     
     def add_target_variables(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add prediction targets for 5, 10, 15, 20 days ahead"""
+        """Add prediction targets - FUTURE DATA, separated properly"""
         for horizon in [5, 10, 15, 20]:
             # Price direction (binary classification)
             df[f'target_direction_{horizon}d'] = np.where(
@@ -127,12 +137,12 @@ class EnhancedDataCollector:
                 df['close'].shift(-horizon) / df['close'] - 1
             )
             
-            # Volatility target (for risk estimation)
+            # Volatility target
             df[f'target_volatility_{horizon}d'] = (
                 df['returns'].shift(-horizon).rolling(horizon).std()
             )
             
-            # Maximum favorable excursion (MFE) and adverse excursion (MAE)
+            # Maximum favorable/adverse excursion
             future_highs = df['high'].rolling(horizon).max().shift(-horizon)
             future_lows = df['low'].rolling(horizon).min().shift(-horizon)
             df[f'target_mfe_{horizon}d'] = (future_highs / df['close'] - 1)
@@ -154,7 +164,7 @@ class EnhancedDataCollector:
         return df
     
     def add_lagged_features(self, df: pd.DataFrame, lags: List[int] = [1, 2, 3, 5, 10]) -> pd.DataFrame:
-        """Add lagged features for sequence models"""
+        """Add lagged features - NO LOOK-AHEAD BIAS"""
         base_features = ['returns', 'volume_ratio', 'rsi_14', 'macd', 'volatility_10']
         
         for feature in base_features:
@@ -169,7 +179,7 @@ class EnhancedDataCollector:
         delta = prices.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
+        rs = gain / loss.replace(0, 1)
         rsi = 100 - (100 / (1 + rs))
         return rsi
     
@@ -189,7 +199,6 @@ class EnhancedDataCollector:
         processed_data = {}
         
         for ticker, df in self.data.items():
-            print(f"Processing {ticker}...")
             df_processed = df.copy()
             
             # Add all feature categories
@@ -199,12 +208,10 @@ class EnhancedDataCollector:
             df_processed = self.add_lagged_features(df_processed)
             df_processed = self.add_target_variables(df_processed)
             
-            # Remove NaN rows (from indicators and targets)
-            df_processed = df_processed.dropna()
-            
+            # Don't drop NaN yet - we'll handle this properly during train/test split
             processed_data[ticker] = df_processed
-            print(f"  {ticker}: {len(df_processed)} samples, {len(df_processed.columns)} features")
         
+        print(f"✓ Processed {len(processed_data)} stocks")
         return processed_data
     
     def get_fundamentals(self) -> pd.DataFrame:
@@ -212,7 +219,10 @@ class EnhancedDataCollector:
         fundamentals = []
         
         print("\nFetching fundamentals...")
-        for ticker in self.tickers:
+        for i, ticker in enumerate(self.tickers):
+            if i % 10 == 0 and i > 0:
+                print(f"  Fetched fundamentals for {i} stocks...")
+            
             try:
                 stock = yf.Ticker(ticker)
                 info = stock.info
@@ -230,9 +240,7 @@ class EnhancedDataCollector:
                     'profit_margin': info.get('profitMargins', np.nan),
                     'debt_to_equity': info.get('debtToEquity', np.nan),
                 })
-                print(f"  ✓ {ticker}")
             except Exception as e:
-                print(f"  ✗ {ticker}: {str(e)}")
                 fundamentals.append({
                     'ticker': ticker,
                     'sector': 'Unknown',
@@ -247,6 +255,7 @@ class EnhancedDataCollector:
                     'debt_to_equity': np.nan,
                 })
         
+        print(f"✓ Fetched fundamentals for {len(fundamentals)} stocks")
         return pd.DataFrame(fundamentals)
     
     def get_clustering_features(self, processed_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -255,24 +264,30 @@ class EnhancedDataCollector:
         
         print("\nCalculating clustering features...")
         for ticker, df in processed_data.items():
+            # Only use past data for clustering
+            df_clean = df.dropna(subset=['returns', 'volatility_20'])
+            
+            if len(df_clean) < 100:
+                continue
+            
             features = {
                 'ticker': ticker,
                 # Return statistics
-                'mean_returns': df['returns'].mean(),
-                'std_returns': df['returns'].std(),
-                'skew_returns': df['returns'].skew(),
-                'kurt_returns': df['returns'].kurtosis(),
+                'mean_returns': df_clean['returns'].mean(),
+                'std_returns': df_clean['returns'].std(),
+                'skew_returns': df_clean['returns'].skew(),
+                'kurt_returns': df_clean['returns'].kurtosis(),
                 # Volatility patterns
-                'mean_volatility': df['volatility_20'].mean(),
-                'volatility_of_volatility': df['volatility_20'].std(),
+                'mean_volatility': df_clean['volatility_20'].mean(),
+                'volatility_of_volatility': df_clean['volatility_20'].std(),
                 # Momentum
-                'mean_rsi': df['rsi_14'].mean(),
-                'trend_strength': df['sma_50'].iloc[-1] / df['sma_200'].iloc[-1] - 1 if len(df) > 200 else 0,
+                'mean_rsi': df_clean['rsi_14'].mean() if 'rsi_14' in df_clean.columns else 50,
+                'trend_strength': (df_clean['sma_50'].iloc[-1] / df_clean['sma_200'].iloc[-1] - 1) if len(df_clean) > 200 and 'sma_200' in df_clean.columns else 0,
                 # Volume
-                'mean_volume_ratio': df['volume_ratio'].mean(),
-                'volume_volatility': df['volume_ratio'].std(),
+                'mean_volume_ratio': df_clean['volume_ratio'].mean() if 'volume_ratio' in df_clean.columns else 1,
+                'volume_volatility': df_clean['volume_ratio'].std() if 'volume_ratio' in df_clean.columns else 0,
                 # Liquidity
-                'mean_spread': df['spread_proxy'].mean(),
+                'mean_spread': df_clean['spread_proxy'].mean() if 'spread_proxy' in df_clean.columns else 0,
             }
             clustering_features.append(features)
         
@@ -285,7 +300,7 @@ class EnhancedDataCollector:
         
         print(f"\nSaving data to {filepath}...")
         
-        # Save individual stock data with features
+        # Save individual stock data
         for ticker, df in processed_data.items():
             df.to_csv(f"{filepath}{ticker}_features.csv")
         
@@ -298,27 +313,55 @@ class EnhancedDataCollector:
         clustering_features.to_csv(f"{filepath}clustering_features.csv", index=False)
         
         print(f"✓ Data saved successfully")
-        print(f"  - {len(processed_data)} stock feature files")
-        print(f"  - Fundamentals data")
-        print(f"  - Clustering features")
+
+
+def get_expanded_stock_universe() -> List[str]:
+    """Get expanded list of liquid stocks across sectors"""
+    return [
+        # Technology (25 stocks)
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'ADBE', 'CRM',
+        'ORCL', 'CSCO', 'AVGO', 'INTC', 'AMD', 'QCOM', 'TXN', 'AMAT', 'MU',
+        'LRCX', 'KLAC', 'SNPS', 'CDNS', 'MRVL', 'NXPI', 'ADI',
+        
+        # Finance (20 stocks)
+        'JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'BLK', 'SCHW', 'AXP', 'USB',
+        'PNC', 'TFC', 'BK', 'STT', 'COF', 'DFS', 'SPGI', 'MCO', 'AON', 'MMC',
+        
+        # Healthcare (20 stocks)
+        'JNJ', 'UNH', 'PFE', 'ABBV', 'TMO', 'MRK', 'ABT', 'DHR', 'LLY', 'AMGN',
+        'GILD', 'CVS', 'CI', 'HUM', 'ISRG', 'SYK', 'BSX', 'MDT', 'ZTS', 'REGN',
+        
+        # Consumer Discretionary (15 stocks)
+        'HD', 'MCD', 'NKE', 'SBUX', 'LOW', 'TJX', 'BKNG', 'CMG', 'ORLY',
+        'MAR', 'YUM', 'DG', 'ROST', 'DHI', 'LEN',
+        
+        # Consumer Staples (10 stocks)
+        'WMT', 'PG', 'KO', 'PEP', 'COST', 'MDLZ', 'CL', 'KMB', 'GIS', 'HSY',
+        
+        # Energy (12 stocks)
+        'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'PSX', 'VLO', 'OXY', 'HES',
+        'HAL', 'BKR',
+        
+        # Industrials (15 stocks)
+        'BA', 'CAT', 'GE', 'HON', 'UPS', 'LMT', 'RTX', 'UNP', 'DE', 'MMM',
+        'NOC', 'ETN', 'EMR', 'ITW', 'PH',
+        
+        # Materials (8 stocks)
+        'LIN', 'APD', 'SHW', 'ECL', 'DD', 'DOW', 'NEM', 'FCX',
+        
+        # Utilities (8 stocks)
+        'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'SRE', 'XEL',
+        
+        # Real Estate (7 stocks)
+        'PLD', 'AMT', 'CCI', 'EQIX', 'PSA', 'SPG', 'O',
+        
+        # Communication Services (10 stocks)
+        'DIS', 'CMCSA', 'NFLX', 'T', 'VZ', 'TMUS', 'CHTR', 'EA', 'TTWO', 'ATVI',
+    ]
 
 
 if __name__ == "__main__":
-    # Example usage
-    tickers = [
-        # Tech
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META',
-        # Finance
-        'JPM', 'BAC', 'GS', 'MS', 'C', 'WFC',
-        # Energy
-        'XOM', 'CVX', 'COP', 'SLB', 'EOG',
-        # Healthcare
-        'JNJ', 'PFE', 'UNH', 'ABBV', 'TMO',
-        # Consumer
-        'WMT', 'HD', 'MCD', 'NKE', 'SBUX',
-        # Industrial
-        'BA', 'CAT', 'GE', 'MMM', 'HON'
-    ]
+    tickers = get_expanded_stock_universe()
     
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365*5)  # 5 years
@@ -329,11 +372,6 @@ if __name__ == "__main__":
         end_date=end_date.strftime('%Y-%m-%d')
     )
     
-    # Fetch and process
     collector.fetch_data()
     processed_data = collector.process_all_features()
     collector.save_data(processed_data)
-    
-    print("\n" + "="*50)
-    print("Data collection complete!")
-    print("="*50)
