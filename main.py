@@ -1,5 +1,5 @@
 """
-main.py - FIXED signal generation to handle sequence length properly
+main.py - FIXED signal generation to properly align predictions with dates
 """
 import os
 import numpy as np
@@ -126,7 +126,7 @@ class TradingPipeline:
                                processed_data: dict, horizon: int = 5) -> dict:
         """
         Step 4: Generate trading signals with probabilities
-        FIXED: Properly handle sequence length in predictions
+        FIXED: Only use data where predictions are valid (after sequence_length)
         """
         print("\n" + "="*70)
         print("STEP 4: GENERATING TRADING SIGNALS")
@@ -161,32 +161,37 @@ class TradingPipeline:
                     # Get features (without target columns)
                     feature_df = df[model.feature_names].dropna()
                     
-                    if len(feature_df) < model.sequence_length + 50:
+                    if len(feature_df) < model.sequence_length + 100:
                         fail_count += 1
                         continue
                     
-                    # Use recent data for prediction
-                    # Take more data than needed to account for sequence consumption
-                    lookback_window = 200  # Increased from 100
-                    recent_data = feature_df.tail(lookback_window).values
+                    # Get all available feature data
+                    X_all = feature_df.values
                     
-                    # ML prediction
-                    ml_predictions = model.predict(recent_data)
+                    # Make predictions on ALL data
+                    ml_predictions = model.predict(X_all)
                     
-                    # CRITICAL FIX: Account for sequence length
-                    # The model consumes sequence_length points to make predictions
-                    # So predictions start at index sequence_length
-                    actual_prediction_length = len(ml_predictions)
+                    # CRITICAL: Predictions are only valid starting from sequence_length
+                    # The first sequence_length points are used to build the first prediction
+                    # So we need to align dates correctly
                     
-                    # Get the corresponding dates for predictions
-                    # Skip the first sequence_length points since they're used for context
-                    valid_dates = feature_df.tail(lookback_window).index[model.sequence_length:]
+                    # Get dates corresponding to predictions
+                    # Predictions start at index sequence_length (the sequence_length-th point)
+                    all_dates = feature_df.index
                     
-                    # Trim to match prediction length
-                    if len(valid_dates) > actual_prediction_length:
-                        valid_dates = valid_dates[-actual_prediction_length:]
-                    elif len(valid_dates) < actual_prediction_length:
-                        ml_predictions = ml_predictions[:len(valid_dates)]
+                    # The model returns predictions for indices [sequence_length, len(X_all)]
+                    # Each prediction at index i predicts for the data point at index i
+                    prediction_start_idx = model.sequence_length
+                    prediction_dates = all_dates[prediction_start_idx:prediction_start_idx + len(ml_predictions)]
+                    
+                    # Ensure lengths match
+                    min_len = min(len(prediction_dates), len(ml_predictions))
+                    prediction_dates = prediction_dates[:min_len]
+                    ml_predictions = ml_predictions[:min_len]
+                    
+                    if len(prediction_dates) == 0:
+                        fail_count += 1
+                        continue
                     
                     # Stochastic probability estimation
                     returns = df['returns'].dropna().tail(252)
@@ -196,16 +201,16 @@ class TradingPipeline:
                     
                     stoch_model = EnsembleProbability(returns)
                     
-                    # Generate signals
+                    # Generate signals for each prediction
                     signals_list = []
                     
-                    for i, date_idx in enumerate(valid_dates):
-                        if i >= len(ml_predictions):
-                            break
-                        
+                    for i, date_idx in enumerate(prediction_dates):
                         try:
                             current_price = df.loc[date_idx, 'close']
                             ml_pred = ml_predictions[i]
+                            
+                            # Clip prediction to valid probability range
+                            ml_pred = np.clip(ml_pred, 0.0, 1.0)
                             
                             signal_info = stoch_model.generate_trading_signal(
                                 current_price=current_price,
@@ -223,18 +228,22 @@ class TradingPipeline:
                                 'var_95': signal_info['risk_var_95'],
                                 'kelly_size': signal_info['position_size_kelly']
                             })
-                        except KeyError:
-                            # Date not found in original dataframe
+                        except (KeyError, IndexError) as e:
+                            # Date not found in original dataframe or index error
                             continue
                     
                     if len(signals_list) > 0:
                         all_signals[ticker] = pd.DataFrame(signals_list).set_index('date')
                         success_count += 1
-                        if success_count % 10 == 0:
+                        if success_count % 20 == 0:
                             print(f"  Generated signals for {success_count} stocks...")
                 
                 except Exception as e:
+                    # Print more detailed error for debugging
+                    import traceback
                     print(f"  {ticker}: Error - {str(e)}")
+                    # Uncomment for full traceback:
+                    # traceback.print_exc()
                     fail_count += 1
                     continue
         
