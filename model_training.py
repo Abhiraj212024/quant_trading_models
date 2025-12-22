@@ -423,14 +423,14 @@ class EnsembleModel:
     
     def predict(self, X, weights=None):
         """
-        Make predictions using ensemble
-        
+        Make predictions using ensemble (FIXED alignment)
+
         Args:
             X: Input features
             weights: Dictionary of model weights
-            
+
         Returns:
-            Ensemble predictions
+            Aligned ensemble predictions
         """
         if weights is None:
             weights = {
@@ -438,34 +438,53 @@ class EnsembleModel:
                 "transformer": 0.35,
                 "lightgbm": 0.30
             }
-        
+
         # Normalize using training statistics
         X = self._normalize_features(X)
-        
+
         preds = {}
-        
-        # Deep learning models (require sequences)
+
+        # ===============================
+        # Sequence-based models
+        # ===============================
         for name in ["cnn_lstm", "transformer"]:
             if name in self.models:
-                ds = sequence_dataset(X, np.zeros(len(X)), self.sequence_length, 32)
+                ds = sequence_dataset(
+                    X,
+                    np.zeros(len(X)),
+                    self.sequence_length,
+                    batch_size=32,
+                    shuffle=False
+                )
                 preds[name] = np.concatenate([
                     self.models[name].predict(xb, verbose=0).ravel()
                     for xb, _ in ds
                 ])
-        
-        # LightGBM (uses raw features)
+
+        # ===============================
+        # LightGBM (trim to match sequences)
+        # ===============================
         if "lightgbm" in self.models:
-            preds["lightgbm"] = self.models["lightgbm"].predict(X)
-        
-        # Ensemble predictions
+            lgb_preds = self.models["lightgbm"].predict(X)
+            preds["lightgbm"] = lgb_preds[self.sequence_length:]
+
         if not preds:
-            return np.zeros(len(X))
-        
-        # Weighted average
-        ensemble_pred = sum(preds[k] * weights.get(k, 0) for k in preds if k in weights)
-        
+            return np.array([])
+
+        # ===============================
+        # FINAL ALIGNMENT (safety)
+        # ===============================
+        min_len = min(len(v) for v in preds.values())
+        for k in preds:
+            preds[k] = preds[k][-min_len:]
+
+        ensemble_pred = sum(
+            preds[k] * weights.get(k, 0)
+            for k in preds
+        )
+
         return ensemble_pred
-    
+
     def save(self, path):
         """
         Save model to disk

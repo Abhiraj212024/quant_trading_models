@@ -210,32 +210,41 @@ class TradingPipeline:
                     signals_list = []
                     
                     for i, date_idx in enumerate(prediction_dates):
-                        try:
-                            current_price = df.loc[date_idx, 'close']
-                            ml_pred = ml_predictions[i]
-                            
-                            # Clip prediction to valid probability range
-                            ml_pred = np.clip(ml_pred, 0.0, 1.0)
-                            
-                            signal_info = stoch_model.generate_trading_signal(
-                                current_price=current_price,
-                                horizon=horizon,
-                                ml_prediction=ml_pred,
-                                threshold=0.6
-                            )
-                            
-                            signals_list.append({
-                                'date': date_idx,
-                                'signal': 1 if signal_info['action'] == 'BUY' else -1 if signal_info['action'] == 'SELL' else 0,
-                                'confidence': signal_info['confidence'],
-                                'probability_up': signal_info['probability_up'],
-                                'expected_return': signal_info['expected_return'],
-                                'var_95': signal_info['risk_var_95'],
-                                'kelly_size': signal_info['position_size_kelly']
-                            })
-                        except (KeyError, IndexError) as e:
-                            # Date not found in original dataframe or index error
+
+                        # Use ONLY past returns up to this date
+                        hist_returns = (
+                            df.loc[:date_idx, 'returns']
+                            .dropna()
+                            .tail(252)
+                        )
+
+                        if len(hist_returns) < 50:
                             continue
+
+                        stoch_model = EnsembleProbability(hist_returns)
+
+                        current_price = df.loc[date_idx, 'close']
+                        ml_pred = float(np.clip(ml_predictions[i], 0.0, 1.0))
+
+                        signal_info = stoch_model.generate_trading_signal(
+                            current_price=current_price,
+                            horizon=horizon,
+                            ml_prediction=ml_pred,
+                            threshold=0.6
+                        )
+
+                        signals_list.append({
+                            'date': date_idx,
+                            'signal': 1 if signal_info['action'] == 'BUY'
+                                    else -1 if signal_info['action'] == 'SELL'
+                                    else 0,
+                            'confidence': signal_info['confidence'],
+                            'probability_up': signal_info['probability_up'],
+                            'expected_return': signal_info['expected_return'],
+                            'var_95': signal_info['risk_var_95'],
+                            'kelly_size': signal_info['position_size_kelly']
+                        })
+
                     
                     if len(signals_list) > 0:
                         all_signals[ticker] = pd.DataFrame(signals_list).set_index('date')
