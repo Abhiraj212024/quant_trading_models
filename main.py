@@ -167,27 +167,32 @@ class TradingPipeline:
                     
                     # Get all available feature data
                     X_all = feature_df.values
+                    all_dates = feature_df.index
+                    
+                    # CRITICAL FIX: Drop the first sequence_length points
+                    # These are ONLY used for building the window, not for predictions
+                    # If we have 1056 points and sequence_length=60:
+                    # - Points 0-59: Used to build first window (no prediction)
+                    # - Points 60-1055: Each gets a prediction (996 predictions)
+                    
+                    if len(X_all) <= model.sequence_length:
+                        fail_count += 1
+                        continue
                     
                     # Make predictions on ALL data
                     ml_predictions = model.predict(X_all)
                     
-                    # CRITICAL: Predictions are only valid starting from sequence_length
-                    # The first sequence_length points are used to build the first prediction
-                    # So we need to align dates correctly
+                    # Drop the first sequence_length dates (they don't have predictions)
+                    valid_dates = all_dates[model.sequence_length:]
                     
-                    # Get dates corresponding to predictions
-                    # Predictions start at index sequence_length (the sequence_length-th point)
-                    all_dates = feature_df.index
+                    # Now match lengths exactly
+                    if len(valid_dates) != len(ml_predictions):
+                        # Adjust to minimum length
+                        min_len = min(len(valid_dates), len(ml_predictions))
+                        valid_dates = valid_dates[:min_len]
+                        ml_predictions = ml_predictions[:min_len]
                     
-                    # The model returns predictions for indices [sequence_length, len(X_all)]
-                    # Each prediction at index i predicts for the data point at index i
-                    prediction_start_idx = model.sequence_length
-                    prediction_dates = all_dates[prediction_start_idx:prediction_start_idx + len(ml_predictions)]
-                    
-                    # Ensure lengths match
-                    min_len = min(len(prediction_dates), len(ml_predictions))
-                    prediction_dates = prediction_dates[:min_len]
-                    ml_predictions = ml_predictions[:min_len]
+                    prediction_dates = valid_dates
                     
                     if len(prediction_dates) == 0:
                         fail_count += 1
