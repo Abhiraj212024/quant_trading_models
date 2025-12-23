@@ -215,10 +215,16 @@ class TradingPipeline:
                         hist_returns = (
                             df.loc[:date_idx, 'returns']
                             .dropna()
-                            .tail(252)
                         )
 
-                        if len(hist_returns) < 50:
+                        if len(hist_returns) < 252:
+                            continue
+
+                        vol_60 = hist_returns.tail(60).std()
+                        vol_252 = hist_returns.tail(252).std()
+
+                        if vol_60 < 0.8*vol_252:
+                            # Skip low volatility days
                             continue
 
                         stoch_model = EnsembleProbability(hist_returns)
@@ -230,7 +236,7 @@ class TradingPipeline:
                             current_price=current_price,
                             horizon=horizon,
                             ml_prediction=ml_pred,
-                            threshold=0.6
+                            threshold=0.65
                         )
 
                         signals_list.append({
