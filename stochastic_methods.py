@@ -270,20 +270,30 @@ class EnsembleProbability:
         
         # GARCH volatility forecast
         garch_results = self.garch_model.forecast_volatility(horizon)
+
+        def logit(p):
+            return np.log(p / (1-p + 1e-8))
+        
+        def sigmoid(x):
+            return 1 / (1 + np.exp(-x))
         
         # Combine with ML prediction if available
         if ml_prediction is not None:
             # Adjust probabilities based on ML model confidence
-            adjusted_prob_up = (mc_results['prob_up'] + ml_prediction) / 2
+            ml_logit = logit(ml_prediction)
+            mc_logit = logit(mc_results['prob_up'])
+            ml_weight = np.tanh(abs(ml_logit))
+            mc_weight = 1.0
+            adjusted_prob_up = sigmoid(mc_weight * mc_logit + ml_weight * ml_logit)
             mc_results['ml_adjusted_prob_up'] = adjusted_prob_up
             mc_results['ml_confidence'] = ml_prediction
-        
+        kelly_prob = mc_results.get('ml_adjusted_prob_up', mc_results['prob_up'])
         # Risk metrics
         results = {
             **mc_results,
             **garch_results,
             'kelly_criterion': self._calculate_kelly(
-                mc_results['prob_up'],
+                kelly_prob,
                 mc_results['expected_price'] / current_price
             ),
             'sharpe_ratio_forecast': self._forecast_sharpe(
@@ -318,9 +328,16 @@ class EnsembleProbability:
         
         # Combined probability
         combined_prob = probs.get('ml_adjusted_prob_up', probs['prob_up'])
+        action = 'HOLD'
+        if combined_prob > threshold:
+            action = 'BUY'
+        elif combined_prob < (1 - threshold):
+            action = 'SELL'
         
+        if probs.get('ml_confidence', probs['prob_up']) < 0.55:
+            action = 'HOLD'  # Low confidence from ML model
         signal = {
-            'action': 'BUY' if combined_prob > threshold else 'SELL' if combined_prob < (1-threshold) else 'HOLD',
+            'action': action,
             'confidence': combined_prob if combined_prob > 0.5 else 1 - combined_prob,
             'probability_up': combined_prob,
             'expected_return': (probs['expected_price'] / current_price - 1) * 100,
