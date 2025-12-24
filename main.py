@@ -398,7 +398,7 @@ def main():
     
     # Define date range (5 years of data)
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=365*5)
+    start_date = end_date - timedelta(days=365*3)
     
     # Create pipeline
     pipeline = TradingPipeline(
