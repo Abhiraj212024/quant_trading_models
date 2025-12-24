@@ -217,15 +217,15 @@ class TradingPipeline:
                             .dropna()
                         )
 
-                        if len(hist_returns) < 252:
+                        if len(hist_returns) < 50:
                             continue
 
-                        vol_60 = hist_returns.tail(60).std()
-                        vol_252 = hist_returns.tail(252).std()
+                        # vol_60 = hist_returns.tail(60).std()
+                        # vol_252 = hist_returns.tail(252).std()
 
-                        if vol_60 < 0.8*vol_252:
-                            # Skip low volatility days
-                            continue
+                        # if vol_60 < 0.8*vol_252:
+                        #     # Skip low volatility days
+                        #     continue
 
                         stoch_model = EnsembleProbability(hist_returns)
 
