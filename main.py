@@ -198,13 +198,6 @@ class TradingPipeline:
                         fail_count += 1
                         continue
                     
-                    # Stochastic probability estimation
-                    returns = df['returns'].dropna().tail(252)
-                    if len(returns) < 50:
-                        fail_count += 1
-                        continue
-                    
-                    stoch_model = EnsembleProbability(returns)
                     
                     # Generate signals for each prediction
                     signals_list = []
@@ -217,15 +210,15 @@ class TradingPipeline:
                             .dropna()
                         )
 
-                        if len(hist_returns) < 50:
+                        if len(hist_returns) < 252:
                             continue
 
-                        # vol_60 = hist_returns.tail(60).std()
-                        # vol_252 = hist_returns.tail(252).std()
-
-                        # if vol_60 < 0.8*vol_252:
-                        #     # Skip low volatility days
-                        #     continue
+                        vol_60 = hist_returns.tail(60).std()
+                        vol_252 = hist_returns.tail(252).std()
+                        realized_vol = vol_60 * np.sqrt(252)
+                        regime_scale = np.clip(vol_60 / vol_252, 0.6, 1.4) # Use Fractional Kelly to amplify strong signals
+                        target_vol = 0.12
+                        vol_scale = target_vol / (realized_vol + 1e-8)
 
                         stoch_model = EnsembleProbability(hist_returns)
 
@@ -239,6 +232,16 @@ class TradingPipeline:
                             threshold=0.65
                         )
 
+                        combined_prob = signal_info['probability_up']
+                        #Scale size by confidence
+                        signal_strength = np.clip((combined_prob - 0.5) * 2, 0.0, 1.0)
+
+                        kelly_fraction = 0.35
+                        max_position_size = 0.08
+
+                        base_kelly = signal_info['position_size_kelly'] / 100.0
+                        position_fraction = np.clip(kelly_fraction * base_kelly * vol_scale * regime_scale * signal_strength, 0.0, max_position_size) # Cap max position size at 8%
+
                         signals_list.append({
                             'date': date_idx,
                             'signal': 1 if signal_info['action'] == 'BUY'
@@ -248,7 +251,8 @@ class TradingPipeline:
                             'probability_up': signal_info['probability_up'],
                             'expected_return': signal_info['expected_return'],
                             'var_95': signal_info['risk_var_95'],
-                            'kelly_size': signal_info['position_size_kelly']
+                            'kelly_size': signal_info['position_size_kelly'],
+                            'position_size': position_fraction*100.0
                         })
 
                     
@@ -278,7 +282,10 @@ class TradingPipeline:
         return all_signals
     
     def step5_backtest(self, processed_data: dict, signals: dict):
-        """Step 5: Backtest trading strategy"""
+        """
+        Step 5: Backtest trading strategy
+        CHANGED: Added new visualization calls
+        """
         print("\n" + "="*70)
         print("STEP 5: BACKTESTING STRATEGY")
         print("="*70)
@@ -313,6 +320,15 @@ class TradingPipeline:
         
         backtester.print_results()
         backtester.plot_results(save_path=f"{self.output_dir}/results/")
+        
+        # ==================== CHANGE: Call new visualization methods ====================
+        print("\nGenerating probability analysis plots...")
+        backtester.plot_probability_analysis(save_path=f"{self.output_dir}/results/")
+        
+        print("\nGenerating model performance plots...")
+        backtester.plot_model_performance(save_path=f"{self.output_dir}/results/")
+        # ================================================================================
+        
         backtester.export_trades(f"{self.output_dir}/results/trades.csv")
         
         return results

@@ -1,5 +1,10 @@
 """
-backtester.py - Comprehensive backtesting with IMPROVED equity visualization
+backtester.py - MODIFIED to support weighted position sizing + enhanced probability plots
+CHANGES:
+1. Portfolio.open_position() - now accepts position_size_pct parameter (line ~80)
+2. Backtester.run() - reads position_size from signals (line ~220)
+3. Added plot_probability_analysis() - new method (line ~450)
+4. Added plot_model_performance() - new method (line ~550)
 """
 import numpy as np
 import pandas as pd
@@ -42,6 +47,7 @@ class Trade:
     pnl_pct: float
     commission: float
     reason: str
+    position_size_pct: float = 0.0  # CHANGE: Added to track position size
 
 
 class Portfolio:
@@ -67,16 +73,43 @@ class Portfolio:
         )
         return self.cash + positions_value
     
-    def can_open_position(self) -> bool:
-        return len(self.positions) < self.config.max_positions
+    def can_open_position(self, prices: Dict[str, float]) -> bool:
+        total_equity = self.get_total_value(prices)
+        invested = sum(
+            self.get_position_value(t, prices.get(t, 0))
+            for t in self.positions
+        )
+        return invested / total_equity < 0.95
+
     
+    # ==================== CHANGE 1: Modified to accept position_size_pct ====================
     def open_position(self, ticker: str, price: float, date: pd.Timestamp,
-                     signal_strength: float = 1.0):
-        if not self.can_open_position() or ticker in self.positions:
+                     position_size_pct: float = None, prices: Dict[str, float] = None) -> bool:
+        """
+        Open a position with weighted sizing
+        
+        CHANGED: Now accepts position_size_pct parameter (0-100 scale)
+        If None, uses default equal-weight allocation
+        """
+        if not self.can_open_position(prices) or ticker in self.positions:
             return False
         
-        available_capital = self.cash / max(1, (self.config.max_positions - len(self.positions)))
-        position_value = available_capital * self.config.position_size * signal_strength
+        # CHANGE: Use provided position_size_pct if available
+        if position_size_pct is not None and position_size_pct > 0:
+            # position_size_pct is already scaled (0-8% typical range from main.py)
+            # Convert to fraction of total portfolio value
+            total_portfolio_value = self.cash + sum(
+                pos['shares'] * prices.get(t, pos['entry_price'])
+                for t, pos in self.positions.items()
+            )
+
+
+            position_value = total_portfolio_value * (position_size_pct / 100.0)
+        else:
+            # Default: equal weight allocation
+            available_capital = self.cash / max(1, (self.config.max_positions - len(self.positions)))
+            position_value = available_capital * self.config.position_size
+        
         effective_price = price * (1 + self.config.slippage)
         shares = int(position_value / effective_price)
         
@@ -92,7 +125,8 @@ class Portfolio:
         self.positions[ticker] = {
             'shares': shares,
             'entry_price': effective_price,
-            'entry_date': date
+            'entry_date': date,
+            'position_size_pct': position_size_pct or 0.0  # CHANGE: Store position size
         }
         self.cash -= (total_cost + commission)
         return True
@@ -121,7 +155,8 @@ class Portfolio:
             pnl=pnl,
             pnl_pct=pnl_pct,
             commission=commission,
-            reason=reason
+            reason=reason,
+            position_size_pct=position.get('position_size_pct', 0.0)  # CHANGE: Include in trade record
         )
         self.trades.append(trade)
         self.cash += proceeds - commission
@@ -152,6 +187,7 @@ class Backtester:
         self.config = config or BacktestConfig()
         self.portfolio = Portfolio(self.config)
         self.results = None
+        self.signals_history = []  # CHANGE: Store signal history for analysis
         
     def run(self, data: Dict[str, pd.DataFrame], 
             signals: Dict[str, pd.DataFrame],
@@ -190,14 +226,29 @@ class Backtester:
                 signal_row = signal_df.loc[date]
                 signal = signal_row.get('signal', 0)
                 confidence = signal_row.get('confidence', 0.5)
+                probability_up = signal_row.get('probability_up', 0.5)
+                position_size = signal_row.get('position_size', None)  # CHANGE 2: Read position_size
+                
                 current_price = prices.get(ticker)
                 
                 if current_price is None:
                     continue
                 
+                # CHANGE: Store signal for later analysis
+                self.signals_history.append({
+                    'date': date,
+                    'ticker': ticker,
+                    'signal': signal, 
+                    'confidence': confidence,
+                    'probability_up': probability_up,
+                    'position_size': position_size,
+                    'price': current_price
+                })
+                
                 if signal == 1:
                     if ticker not in self.portfolio.positions:
-                        self.portfolio.open_position(ticker, current_price, date, confidence)
+                        # CHANGE: Pass position_size to open_position
+                        self.portfolio.open_position(ticker, current_price, date, position_size, prices)
                 elif signal == -1:
                     if ticker in self.portfolio.positions:
                         self.portfolio.close_position(ticker, current_price, date, 'signal')
@@ -422,6 +473,287 @@ class Backtester:
             print(f"✓ Plot saved to {save_path}/backtest_results.png")
         
         plt.show()
+    def plot_probability_analysis(self, save_path: str = None):
+        """
+        NEW METHOD: Analyze probability predictions vs actual outcomes
+        """
+        trades_df = pd.DataFrame([vars(t) for t in self.portfolio.trades])
+        signals_df = pd.DataFrame(self.signals_history)
+        
+        if len(trades_df) == 0 or len(signals_df) == 0:
+            print("No data for probability analysis")
+            return
+        
+        # Merge trades with their entry signals
+        trades_with_signals = []
+        for _, trade in trades_df.iterrows():
+            matching_signal = signals_df[
+                (signals_df['ticker'] == trade['ticker']) & 
+                (signals_df['date'] == trade['entry_date'])
+            ]
+            if len(matching_signal) > 0:
+                trades_with_signals.append({
+                    'probability_up': matching_signal.iloc[0]['probability_up'],
+                    'confidence': matching_signal.iloc[0]['confidence'],
+                    'position_size': matching_signal.iloc[0]['position_size'],
+                    'pnl_pct': trade['pnl_pct'],
+                    'win': 1 if trade['pnl'] > 0 else 0
+                })
+        
+        analysis_df = pd.DataFrame(trades_with_signals)
+        
+        if len(analysis_df) == 0:
+            print("No matched trades for analysis")
+            return
+        
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig.suptitle('Probability & Model Performance Analysis', fontsize=16, fontweight='bold')
+        
+        # 1. Probability calibration curve
+        ax = axes[0, 0]
+        prob_bins = np.linspace(0, 1, 11)
+        bin_centers = (prob_bins[:-1] + prob_bins[1:]) / 2
+        
+        actual_win_rates = []
+        for i in range(len(prob_bins) - 1):
+            mask = (analysis_df['probability_up'] >= prob_bins[i]) & \
+                   (analysis_df['probability_up'] < prob_bins[i+1])
+            if mask.sum() > 0:
+                actual_win_rates.append(analysis_df[mask]['win'].mean())
+            else:
+                actual_win_rates.append(np.nan)
+        
+        ax.plot([0, 1], [0, 1], 'k--', label='Perfect Calibration', alpha=0.5)
+        ax.plot(bin_centers, actual_win_rates, 'o-', linewidth=2, markersize=8, 
+                label='Actual Win Rate', color='#2E86AB')
+        ax.set_xlabel('Predicted Probability', fontsize=11)
+        ax.set_ylabel('Actual Win Rate', fontsize=11)
+        ax.set_title('Probability Calibration', fontsize=12, fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # 2. Confidence vs P&L
+        ax = axes[0, 1]
+        scatter = ax.scatter(analysis_df['confidence'], analysis_df['pnl_pct'], 
+                           c=analysis_df['win'], cmap='RdYlGn', alpha=0.6, s=50)
+        ax.axhline(0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+        ax.set_xlabel('Confidence', fontsize=11)
+        ax.set_ylabel('P&L (%)', fontsize=11)
+        ax.set_title('Confidence vs Actual Returns', fontsize=12, fontweight='bold')
+        plt.colorbar(scatter, ax=ax, label='Win')
+        ax.grid(True, alpha=0.3)
+        
+        # 3. Position size distribution
+        ax = axes[0, 2]
+        analysis_df['position_size'].hist(bins=30, ax=ax, alpha=0.7, 
+                                         color='purple', edgecolor='black')
+        ax.axvline(analysis_df['position_size'].mean(), color='r', 
+                  linestyle='--', linewidth=2, 
+                  label=f'Mean: {analysis_df["position_size"].mean():.2f}%')
+        ax.set_xlabel('Position Size (%)', fontsize=11)
+        ax.set_ylabel('Frequency', fontsize=11)
+        ax.set_title('Position Size Distribution', fontsize=12, fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # 4. Position size vs P&L
+        ax = axes[1, 0]
+        scatter = ax.scatter(analysis_df['position_size'], analysis_df['pnl_pct'],
+                           c=analysis_df['probability_up'], cmap='viridis', 
+                           alpha=0.6, s=50)
+        ax.axhline(0, color='black', linestyle='-', linewidth=1, alpha=0.5)
+        ax.set_xlabel('Position Size (%)', fontsize=11)
+        ax.set_ylabel('P&L (%)', fontsize=11)
+        ax.set_title('Position Sizing Effectiveness', fontsize=12, fontweight='bold')
+        plt.colorbar(scatter, ax=ax, label='Prob Up')
+        ax.grid(True, alpha=0.3)
+        
+        # 5. Win rate by probability bucket
+        ax = axes[1, 1]
+        prob_ranges = ['0-50%', '50-60%', '60-70%', '70-80%', '80-100%']
+        win_rates = []
+        counts = []
+        
+        for low, high in [(0, 0.5), (0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 1.0)]:
+            mask = (analysis_df['probability_up'] >= low) & \
+                   (analysis_df['probability_up'] < high)
+            if mask.sum() > 0:
+                win_rates.append(analysis_df[mask]['win'].mean() * 100)
+                counts.append(mask.sum())
+            else:
+                win_rates.append(0)
+                counts.append(0)
+        
+        bars = ax.bar(prob_ranges, win_rates, alpha=0.7, color='steelblue', edgecolor='black')
+        ax.axhline(50, color='red', linestyle='--', linewidth=1, label='50% Baseline')
+        ax.set_ylabel('Win Rate (%)', fontsize=11)
+        ax.set_title('Win Rate by Probability Bucket', fontsize=12, fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        # Add counts on bars
+        for bar, count in zip(bars, counts):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'n={count}', ha='center', va='bottom', fontsize=9)
+        
+        # 6. Expected vs Actual returns by probability bucket
+        ax = axes[1, 2]
+        avg_returns = []
+        for low, high in [(0, 0.5), (0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 1.0)]:
+            mask = (analysis_df['probability_up'] >= low) & \
+                   (analysis_df['probability_up'] < high)
+            if mask.sum() > 0:
+                avg_returns.append(analysis_df[mask]['pnl_pct'].mean())
+            else:
+                avg_returns.append(0)
+        
+        ax.bar(prob_ranges, avg_returns, alpha=0.7, color='green', edgecolor='black')
+        ax.axhline(0, color='black', linestyle='-', linewidth=1)
+        ax.set_ylabel('Average Return (%)', fontsize=11)
+        ax.set_title('Avg Return by Probability Bucket', fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(f"{save_path}/probability_analysis.png", dpi=300, bbox_inches='tight')
+            print(f"✓ Probability analysis saved to {save_path}/probability_analysis.png")
+        
+        plt.show()
+        
+        # Print statistics
+        print("\n" + "="*60)
+        print("PROBABILITY ANALYSIS SUMMARY")
+        print("="*60)
+        print(f"Total trades analyzed: {len(analysis_df)}")
+        print(f"Average predicted probability: {analysis_df['probability_up'].mean():.3f}")
+        print(f"Actual win rate: {analysis_df['win'].mean():.3f}")
+        print(f"Calibration error: {abs(analysis_df['probability_up'].mean() - analysis_df['win'].mean()):.3f}")
+        print("="*60)
+    
+    # ==================== CHANGE 4: NEW METHOD - Model Performance ====================
+    def plot_model_performance(self, save_path: str = None):
+        """
+        NEW METHOD: Detailed model performance metrics over time
+        """
+        trades_df = pd.DataFrame([vars(t) for t in self.portfolio.trades])
+        equity_df = pd.DataFrame(self.portfolio.equity_curve)
+        
+        if len(trades_df) == 0:
+            print("No trades for model performance analysis")
+            return
+        
+        # Calculate rolling metrics
+        trades_df = trades_df.sort_values('entry_date')
+        trades_df['cumulative_pnl'] = trades_df['pnl'].cumsum()
+        trades_df['rolling_win_rate'] = trades_df['win'].rolling(20, min_periods=1).mean() * 100
+        trades_df['rolling_avg_pnl'] = trades_df['pnl_pct'].rolling(20, min_periods=1).mean()
+        trades_df['win'] = (trades_df['pnl'] > 0).astype(int)
+        
+        fig = plt.figure(figsize=(18, 14))
+        gs = fig.add_gridspec(4, 2, hspace=0.35, wspace=0.3)
+        
+        # 1. Cumulative P&L over time
+        ax1 = fig.add_subplot(gs[0, :])
+        ax1.plot(trades_df['entry_date'], trades_df['cumulative_pnl'], 
+                linewidth=2, color='#2E86AB')
+        ax1.fill_between(trades_df['entry_date'], 0, trades_df['cumulative_pnl'],
+                        alpha=0.3, color='#2E86AB')
+        ax1.set_title('Cumulative P&L Over Time', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Cumulative P&L ($)', fontsize=11)
+        ax1.grid(True, alpha=0.3)
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x/1000:.0f}K'))
+        
+        # 2. Rolling win rate
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax2.plot(trades_df['entry_date'], trades_df['rolling_win_rate'],
+                linewidth=2, color='green')
+        ax2.axhline(50, color='red', linestyle='--', alpha=0.5, label='50% Baseline')
+        ax2.fill_between(trades_df['entry_date'], 50, trades_df['rolling_win_rate'],
+                        alpha=0.3, color='green')
+        ax2.set_title('Rolling Win Rate (20-trade window)', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Win Rate (%)', fontsize=11)
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # 3. Rolling average P&L
+        ax3 = fig.add_subplot(gs[1, 1])
+        ax3.plot(trades_df['entry_date'], trades_df['rolling_avg_pnl'],
+                linewidth=2, color='purple')
+        ax3.axhline(0, color='black', linestyle='-', linewidth=1)
+        ax3.fill_between(trades_df['entry_date'], 0, trades_df['rolling_avg_pnl'],
+                        alpha=0.3, color='purple')
+        ax3.set_title('Rolling Avg P&L% (20-trade window)', fontsize=12, fontweight='bold')
+        ax3.set_ylabel('Avg P&L (%)', fontsize=11)
+        ax3.grid(True, alpha=0.3)
+        
+        # 4. Trade duration distribution
+        ax4 = fig.add_subplot(gs[2, 0])
+        trades_df['holding_period'].hist(bins=30, ax=ax4, alpha=0.7, 
+                                        color='orange', edgecolor='black')
+        ax4.axvline(trades_df['holding_period'].median(), color='r',
+                   linestyle='--', linewidth=2,
+                   label=f'Median: {trades_df["holding_period"].median():.1f} days')
+        ax4.set_xlabel('Holding Period (days)', fontsize=11)
+        ax4.set_ylabel('Frequency', fontsize=11)
+        ax4.set_title('Trade Duration Distribution', fontsize=12, fontweight='bold')
+        ax4.legend()
+        ax4.grid(True, alpha=0.3)
+        
+        # 5. Exit reason breakdown
+        ax5 = fig.add_subplot(gs[2, 1])
+        reason_counts = trades_df['reason'].value_counts()
+        colors = {'signal': '#2E86AB', 'stop_loss': 'red', 
+                 'take_profit': 'green', 'end_of_backtest': 'gray'}
+        ax5.pie(reason_counts.values, labels=reason_counts.index, autopct='%1.1f%%',
+               colors=[colors.get(r, 'blue') for r in reason_counts.index],
+               startangle=90)
+        ax5.set_title('Exit Reason Distribution', fontsize=12, fontweight='bold')
+        
+        # 6. Win/Loss by position size
+        ax6 = fig.add_subplot(gs[3, 0])
+        wins = trades_df[trades_df['win'] == 1]
+        losses = trades_df[trades_df['win'] == 0]
+        
+        if len(wins) > 0:
+            ax6.scatter(wins['position_size_pct'], wins['pnl_pct'],
+                       alpha=0.6, s=50, color='green', label='Wins')
+        if len(losses) > 0:
+            ax6.scatter(losses['position_size_pct'], losses['pnl_pct'],
+                       alpha=0.6, s=50, color='red', label='Losses')
+        
+        ax6.axhline(0, color='black', linestyle='-', linewidth=1)
+        ax6.set_xlabel('Position Size (%)', fontsize=11)
+        ax6.set_ylabel('P&L (%)', fontsize=11)
+        ax6.set_title('Win/Loss by Position Size', fontsize=12, fontweight='bold')
+        ax6.legend()
+        ax6.grid(True, alpha=0.3)
+        
+        # 7. Monthly returns heatmap
+        ax7 = fig.add_subplot(gs[3, 1])
+        equity_df['date'] = pd.to_datetime(equity_df['date'])
+        equity_df['month'] = equity_df['date'].dt.to_period('M')
+        monthly_returns = equity_df.groupby('month')['equity'].apply(
+            lambda x: (x.iloc[-1] / x.iloc[0] - 1) * 100
+        )
+        
+        if len(monthly_returns) > 0:
+            monthly_returns.plot(kind='bar', ax=ax7, color='steelblue', alpha=0.7)
+            ax7.axhline(0, color='black', linestyle='-', linewidth=1)
+            ax7.set_xlabel('Month', fontsize=11)
+            ax7.set_ylabel('Return (%)', fontsize=11)
+            ax7.set_title('Monthly Returns', fontsize=12, fontweight='bold')
+            ax7.grid(True, alpha=0.3, axis='y')
+            plt.setp(ax7.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        plt.suptitle('Model Performance Analysis', fontsize=16, fontweight='bold', y=0.995)
+        
+        if save_path:
+            plt.savefig(f"{save_path}/model_performance.png", dpi=300, bbox_inches='tight')
+            print(f"✓ Model performance saved to {save_path}/model_performance.png")
+        
+        plt.show()
     
     def export_trades(self, filepath: str):
         """Export trade history"""
@@ -431,4 +763,4 @@ class Backtester:
 
 
 if __name__ == "__main__":
-    print("Enhanced backtester loaded with improved equity visualization")
+    print("Enhanced backtester loaded with weighted position sizing and probability analysis")
