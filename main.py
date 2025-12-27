@@ -232,10 +232,8 @@ class TradingPipeline:
                             threshold=0.65
                         )
 
-                        combined_prob = signal_info['probability_up']
-
                         kelly_fraction = 0.65
-                        max_position_size = 0.08
+                        max_position_size = 0.20
                         min_position_size = 0.01
 
                         base_kelly = signal_info['position_size_kelly'] / 100.0
