@@ -233,15 +233,15 @@ class TradingPipeline:
                         )
 
                         combined_prob = signal_info['probability_up']
-                        #Scale size by confidence
-                        signal_strength = np.clip((combined_prob - 0.5) * 2, 0.0, 1.0)
 
-                        kelly_fraction = 0.35
+                        kelly_fraction = 0.65
                         max_position_size = 0.08
+                        min_position_size = 0.01
 
                         base_kelly = signal_info['position_size_kelly'] / 100.0
-                        position_fraction = np.clip(kelly_fraction * base_kelly * vol_scale * regime_scale * signal_strength, 0.0, max_position_size) # Cap max position size at 8%
-
+                        position_fraction = np.clip(kelly_fraction * base_kelly * vol_scale * regime_scale, 0.0, max_position_size) # Cap max position size at 8%
+                        if position_fraction < min_position_size:
+                            continue  # Skip signals with very low position size
                         signals_list.append({
                             'date': date_idx,
                             'signal': 1 if signal_info['action'] == 'BUY'

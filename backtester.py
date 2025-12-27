@@ -647,9 +647,9 @@ class Backtester:
         # Calculate rolling metrics
         trades_df = trades_df.sort_values('entry_date')
         trades_df['cumulative_pnl'] = trades_df['pnl'].cumsum()
+        trades_df['win'] = (trades_df['pnl'] > 0).astype(int)
         trades_df['rolling_win_rate'] = trades_df['win'].rolling(20, min_periods=1).mean() * 100
         trades_df['rolling_avg_pnl'] = trades_df['pnl_pct'].rolling(20, min_periods=1).mean()
-        trades_df['win'] = (trades_df['pnl'] > 0).astype(int)
         
         fig = plt.figure(figsize=(18, 14))
         gs = fig.add_gridspec(4, 2, hspace=0.35, wspace=0.3)
