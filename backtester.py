@@ -646,6 +646,7 @@ class Backtester:
         
         # Calculate rolling metrics
         trades_df = trades_df.sort_values('entry_date')
+        trades_df['holding_period'] = (trades_df['exit_date'] - trades_df['entry_date']).dt.days
         trades_df['cumulative_pnl'] = trades_df['pnl'].cumsum()
         trades_df['win'] = (trades_df['pnl'] > 0).astype(int)
         trades_df['rolling_win_rate'] = trades_df['win'].rolling(20, min_periods=1).mean() * 100
