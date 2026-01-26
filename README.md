@@ -1,7 +1,7 @@
 # 📈 Quantitative Trading System  
 **End-to-End Machine Learning Pipeline for Financial Time-Series Research**
 
-This project is a full-stack quantitative research and trading system that covers the entire lifecycle of ML-driven trading strategies — from **market data collection and regime discovery** to **deep learning modeling, probabilistic signal generation, and portfolio backtesting**.
+This project is a full-stack quantitative research and trading system that covers the entire lifecycle of ML-driven trading strategies — from **market data collection and regime discovery** to **deep learning modeling, probabilistic signal generation, and portfolio backtesting** inspired from my contribution for Inter-IIT Tech Meet 14.0 under the quantitative finance High Prep PS 1.
 
 It is designed as a **research framework**, focusing on realism:  
 ✔ multi-asset data  
