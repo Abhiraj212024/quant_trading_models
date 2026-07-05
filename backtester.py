@@ -277,7 +277,7 @@ class Backtester:
                                             final_date, 'end_of_backtest')
         
         self.results = self._calculate_metrics()
-        print("\n✓ Backtest complete")
+        print("\n Backtest complete")
         return self.results
     
     def _calculate_metrics(self) -> Dict:
@@ -470,7 +470,7 @@ class Backtester:
         
         if save_path:
             plt.savefig(f"{save_path}/backtest_results.png", dpi=300, bbox_inches='tight')
-            print(f"✓ Plot saved to {save_path}/backtest_results.png")
+            print(f"Plot saved to {save_path}/backtest_results.png")
         
         plt.show()
     def plot_probability_analysis(self, save_path: str = None):
@@ -618,7 +618,7 @@ class Backtester:
         
         if save_path:
             plt.savefig(f"{save_path}/probability_analysis.png", dpi=300, bbox_inches='tight')
-            print(f"✓ Probability analysis saved to {save_path}/probability_analysis.png")
+            print(f"Probability analysis saved to {save_path}/probability_analysis.png")
         
         plt.show()
         
@@ -752,7 +752,7 @@ class Backtester:
         
         if save_path:
             plt.savefig(f"{save_path}/model_performance.png", dpi=300, bbox_inches='tight')
-            print(f"✓ Model performance saved to {save_path}/model_performance.png")
+            print(f"Model performance saved to {save_path}/model_performance.png")
         
         plt.show()
     
@@ -760,7 +760,7 @@ class Backtester:
         """Export trade history"""
         trades_df = pd.DataFrame([vars(t) for t in self.portfolio.trades])
         trades_df.to_csv(filepath, index=False)
-        print(f"✓ Trades exported to {filepath}")
+        print(f"Trades exported to {filepath}")
 
 
 if __name__ == "__main__":

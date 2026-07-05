@@ -39,8 +39,8 @@ class EnhancedDataCollector:
             except Exception as e:
                 failed += 1
         
-        print(f"✓ Successfully fetched {successful} stocks")
-        print(f"✗ Failed to fetch {failed} stocks")
+        print(f"Successfully fetched {successful} stocks")
+        print(f"Failed to fetch {failed} stocks")
         return self.data
     
     def add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:

@@ -50,7 +50,7 @@ class TradingPipeline:
         processed_data = self.collector.process_all_features()
         self.collector.save_data(processed_data, f"{self.output_dir}/data/")
         
-        print(f"\n✓ Collected data for {len(processed_data)} stocks")
+        print(f"\nCollected data for {len(processed_data)} stocks")
         return processed_data
     
     def step2_cluster_stocks(self, processed_data: dict, n_clusters: int = 5):
@@ -119,8 +119,8 @@ class TradingPipeline:
                     failed_count += 1
                     continue
         
-        print(f"\n✓ Successfully trained {trained_count} model ensembles")
-        print(f"✗ Failed to train {failed_count} model ensembles")
+        print(f"\nSuccessfully trained {trained_count} model ensembles")
+        print(f"Failed to train {failed_count} model ensembles")
     
     def step4_generate_signals(self, cluster_results: dict, 
                                processed_data: dict, horizon: int = 5) -> dict:
@@ -275,8 +275,8 @@ class TradingPipeline:
         for ticker, signals_df in all_signals.items():
             signals_df.to_csv(f"{signals_dir}{ticker}_signals.csv")
         
-        print(f"\n✓ Generated signals for {success_count} stocks")
-        print(f"✗ Failed to generate signals for {fail_count} stocks")
+        print(f"\nGenerated signals for {success_count} stocks")
+        print(f"Failed to generate signals for {fail_count} stocks")
         return all_signals
     
     def step5_backtest(self, processed_data: dict, signals: dict):
@@ -319,13 +319,13 @@ class TradingPipeline:
         backtester.print_results()
         backtester.plot_results(save_path=f"{self.output_dir}/results/")
         
-        # ==================== CHANGE: Call new visualization methods ====================
+
         print("\nGenerating probability analysis plots...")
         backtester.plot_probability_analysis(save_path=f"{self.output_dir}/results/")
         
         print("\nGenerating model performance plots...")
         backtester.plot_model_performance(save_path=f"{self.output_dir}/results/")
-        # ================================================================================
+
         
         backtester.export_trades(f"{self.output_dir}/results/trades.csv")
         
@@ -429,9 +429,9 @@ def main():
     )
     
     if results:
-        print("\n✓ Pipeline completed successfully!")
+        print("Pipeline completed successfully!")
     else:
-        print("\n✗ Pipeline failed!")
+        print("Pipeline failed!")
 
 
 if __name__ == "__main__":
